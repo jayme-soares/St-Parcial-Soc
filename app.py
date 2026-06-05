@@ -6,6 +6,7 @@ import html as html_lib
 import os
 from email.utils import parsedate_to_datetime
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(page_title="Parcial SOC - Maricá | Ceneged", page_icon="📊", layout="wide")
@@ -215,7 +216,10 @@ def buscar_data_atualizacao(url_arquivo: str):
     if not last_modified:
         return None
     data_modificacao = parsedate_to_datetime(last_modified)
-    return data_modificacao.astimezone()
+    
+    # Força a conversão sempre para o fuso horário de Brasília/RJ (UTC-3)
+    fuso_br = ZoneInfo("America/Sao_Paulo")
+    return data_modificacao.astimezone(fuso_br)
 
 # 3. INTERFACE E BOTÃO DE REFRESH
 URL_BASE = obter_url_drive("DRIVE_URL_BASE")
