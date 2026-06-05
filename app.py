@@ -34,7 +34,7 @@ def validar_config_drive(url_base: str | None, url_suporte: str | None) -> None:
 ALTURA_GRAFICO_P = 200
 ALTURA_GRAFICO_M = 260
 
-def estilo_tabela(df: pd.DataFrame, destacar_total: bool = False) -> pd.io.formats.style.Styler:
+def estilo_tabela(df: pd.DataFrame, destacar_total: bool = False):
     azul_cabecalho = "#0b5ea8"
     azul_claro = "#e9f2ff"
     styler = df.style
