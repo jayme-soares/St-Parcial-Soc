@@ -1,9 +1,12 @@
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import html as html_lib
 import os
+import re
+import unicodedata
 from email.utils import parsedate_to_datetime
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -15,8 +18,97 @@ st.set_page_config(page_title="Parcial SOC - Maricá | Ceneged", page_icon="📊
 CORES_PRODUCAO = {"Produtivo": "#005b96", "Improdutivo": "#d9534f", "Contato Gestor": "#5cb85c"}
 CORES_SETOR = {"Corte": "#d9534f", "Religa": "#005b96", "Novas": "#5bc0de", "Pré Venda": "#5bc0de", "Aferição": "#00008b", "Vistoria": "#f0ad4e"}
 
+st.markdown(
+    """
+    <style>
+    .indicador-card {
+        border: 1px solid #d6e4f0;
+        border-radius: 10px;
+        background: #f8fbff;
+        padding: 12px 14px;
+    }
+    .indicador-titulo {
+        font-size: 0.86rem;
+        color: #5b6b7c;
+        margin-bottom: 2px;
+    }
+    .indicador-valor {
+        font-size: 1.55rem;
+        font-weight: 700;
+        color: #0b5ea8;
+        line-height: 1.2;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Dicionários de referência (edite aqui quando precisar ajustar os mapeamentos)
+MAPA_TRAMITE_EXEC = {
+    "SR0002 - CORTE NO MEDIDOR": "Medidor",
+    "SR0001 - CORTE NO POSTE": "Poste",
+    "SR0032-CORTE MEDIDOR - MED AGRUPADA": "Medidor",
+    "SR0018 - CORTE COM RETIRADA DE RAMAL": "Ramal",
+    "SR0020 - CORTE COM RETIRADA DE MEDIDOR": "Medidor",
+    "SR0019 - CORTE C/ RETIRADA MEDIDOR E RAMAL": "Ramal",
+    "CORTE NO MEDIDOR-POSTE MADEIRA": "Medidor",
+    "SR0026 - RETIRADA DE GAMBIARRA": "Medidor",
+    "SR0040 - CORTE POSTE DAT": "Poste",
+    "SR0011 - CORTE NO RAMAL DAT": "Ramal",
+    "SR0062 - CORTE MEDIDOR REDE D": "Medidor",
+    "SR0027 - RETIRO DE GAMB C/INST DE DISP": "Medidor",
+    "SR0061 - CORTE MEDIDOR REDE M": "Medidor",
+    "SR0087 - CORTE DISJ C/ INST DE DISP": "Medidor",
+    "SR0017 - CORTE NO DISJUNTOR": "Medidor",
+    "SR0060-CORTE POSTE PODAO": "Poste",
+}
+
+MAPA_CLASSIF_CORTE = {
+    "CICLO 1 - DESLIGAMENTO A PEDIDO RET MEDIDOR E RAMAL AEREA": "Massivo",
+    "CICLO 1.1 - DESLIGAMENTO A PEDIDO RET MEDIDOR E RAMAL DAT": "Massivo",
+    "CICLO 15 - CORTE PRIORIDADE 1 - MEDIDOR": "Massivo",
+    "CICLO 16 - CORTE PRIORIDADE 2 - MEDIDOR": "Massivo",
+    "CICLO 17 - CORTE PRIORIDADE 3 - MEDIDOR": "Massivo",
+    "CICLO 2 - RECORTE - AEREA": "Massivo",
+    "CICLO 2.1 - RECORTE - DAT": "Massivo",
+    "CICLO 2.2 - RECORTE - MEDIDOR": "Massivo",
+    "CICLO 22 - CORTE - PRIORIDADE 1 - POSTE AEREA": "Massivo",
+    "CICLO 23 - CORTE - PRIORIDADE 2 - POSTE AEREA": "Massivo",
+    "CICLO 24 - CORTE - PRIORIDADE 3 - POSTE AEREA": "Massivo",
+    "CICLO 29 - CORTE - PRIORIDADE 1 - POSTE DAT": "Massivo",
+    "CICLO 3 - CORTE - MASSIVO MEDIDOR": "Perdas",
+    "CICLO 3.1 - CORTE - MASSIVO POSTE AEREA": "Massivo",
+    "CICLO 3.2 - CORTE - MASSIVO POSTE DAT": "Massivo",
+    "CICLO 30 - CORTE - PRIORIDADE 2 - POSTE DAT": "Massivo",
+    "CICLO 36 - CORTE - PRIORIDADE 1 - RETIRADA DE RAMAL AEREA": "Massivo",
+    "CICLO 37 - CORTE - PRIORIDADE 2 - RETIRADA DE RAMAL AEREA": "Massivo",
+    "CICLO 43 - CORTE - PRIORIDADE 1 - RETIRADA DE RAMAL DAT": "Massivo",
+    "CICLO 44 - CORTE - PRIORIDADE 2 - RETIRADA DE RAMAL DAT": "Massivo",
+    "CICLO 5 - FISCALIZACAO": "Perdas",
+    "CICLO 5.1 - FISCALIZACAO DAT": "Perdas",
+    "CICLO 51 - CORTE - PRIORIDADE 1 SENTINELA MI": "Massivo",
+    "CICLO 52 - CORTE - PRIORIDADE 2 SENTINELA MI": "Massivo",
+    "CICLO 53 - CORTE - PRIORIDADE 3 SENTINELA MI": "Massivo",
+    "CICLO 6 - SEM CONTRATO": "Perdas",
+    "CICLO 6.1 - SEM CONTRATO DAT": "Perdas",
+}
+
 def obter_url_drive(chave: str) -> str | None:
-    return os.getenv(chave) or st.secrets.get(chave)
+    valor_env = os.getenv(chave)
+    if valor_env:
+        return valor_env
+    try:
+        return st.secrets.get(chave)
+    except StreamlitSecretNotFoundError:
+        return None
+
+def normalizar_chave_texto(valor) -> str:
+    if pd.isna(valor):
+        return ""
+    texto = unicodedata.normalize("NFKD", str(valor))
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^A-Z0-9\s\-\/\.]", "", texto.upper())
+    return " ".join(texto.strip().split())
 
 def validar_config_drive(url_base: str | None, url_suporte: str | None) -> None:
     faltando = []
@@ -174,12 +266,46 @@ def render_tabela_setor_equipes(df: pd.DataFrame, altura: int) -> None:
     )
     st.markdown(tabela_html, unsafe_allow_html=True)
 
+def filtro_checkbox_multiplo(label: str, opcoes: list[str], chave_base: str) -> tuple[list[str], bool]:
+    st.markdown(f"**{label}**")
+    chave_todas = f"{chave_base}_todas"
+    chave_todas_prev = f"{chave_base}_todas_prev"
+
+    if chave_todas not in st.session_state:
+        st.session_state[chave_todas] = True
+    if chave_todas_prev not in st.session_state:
+        st.session_state[chave_todas_prev] = st.session_state[chave_todas]
+
+    for i, _ in enumerate(opcoes):
+        chave_item = f"{chave_base}_item_{i}"
+        if chave_item not in st.session_state:
+            st.session_state[chave_item] = True
+
+    selecionar_todas = st.checkbox("Selecionar todas", key=chave_todas)
+
+    if selecionar_todas != st.session_state[chave_todas_prev]:
+        for i, _ in enumerate(opcoes):
+            st.session_state[f"{chave_base}_item_{i}"] = selecionar_todas
+    st.session_state[chave_todas_prev] = selecionar_todas
+
+    selecionadas = []
+
+    for i, opcao in enumerate(opcoes):
+        chave_item = f"{chave_base}_item_{i}"
+        marcado = st.checkbox(str(opcao), key=chave_item)
+        if marcado:
+            selecionadas.append(opcao)
+
+    return selecionadas, selecionar_todas
+
 # 2. FUNÇÃO DE LEITURA E TRATAMENTO (Com Cache para velocidade)
 @st.cache_data(ttl=300) # O cache dura 5 min. O botão de atualizar força a limpeza.
 def carregar_dados():
     # Lendo as abas do Excel
     df_linhas = pd.read_excel(URL_BASE, sheet_name="Linhas TdC")
     df_ciclos = pd.read_excel(URL_SUPORTE, sheet_name="Ciclos")
+    dict_tramite_exec = {normalizar_chave_texto(k): v for k, v in MAPA_TRAMITE_EXEC.items()}
+    dict_classif_corte = {normalizar_chave_texto(k): v for k, v in MAPA_CLASSIF_CORTE.items()}
     
     # === TRATAMENTOS DA TABELA 'Linhas TdC' (Tradução do M para Python) ===
     # Coluna Condicional: ResultadoProducao
@@ -190,17 +316,24 @@ def carregar_dados():
     escolhas_res = ["Contato Gestor", "Produtivo"]
     df_linhas['ResultadoProducao'] = np.select(cond_res, default="Improdutivo", choicelist=escolhas_res)
 
-    # Coluna Condicional: TramiteExec
-    cond_tram = [
-        df_linhas['Causa/Descritivo Resultado'].astype(str).str.contains("MEDIDOR", case=False, na=False),
-        df_linhas['Causa/Descritivo Resultado'].astype(str).str.contains("POSTE", case=False, na=False),
-        df_linhas['Causa/Descritivo Resultado'].astype(str).str.contains("RAMAL", case=False, na=False)
-    ]
-    escolhas_tram = ["EXECUTADO MEDIDOR", "EXECUTADO POSTE", "EXECUTADO RAMAL"]
-    df_linhas['TramiteExec'] = np.select(cond_tram, default="Não Executado", choicelist=escolhas_tram)
+    # Mapeamento de trâmite executado via dicionário fixo
+    df_linhas['TramiteExec'] = (
+        df_linhas['Causa/Descritivo Resultado']
+        .map(normalizar_chave_texto)
+        .map(dict_tramite_exec)
+        .fillna("Não Executado")
+    )
     
     # Relacionamento (Mesclagem) com a tabela Ciclos para buscar o "Setor"
     df_linhas = df_linhas.merge(df_ciclos[['Tipo Operação', 'Setor']], on='Tipo Operação', how='left')
+
+    # Classificação de corte via dicionário fixo
+    df_linhas['ClassifCorte'] = (
+        df_linhas['Tipo Operação']
+        .map(normalizar_chave_texto)
+        .map(dict_classif_corte)
+        .fillna("Não Classificado")
+    )
     
     # Preencher setores vazios para evitar erro nos filtros
     df_linhas['Setor'] = df_linhas['Setor'].fillna("Não Classificado")
@@ -264,34 +397,83 @@ with st.sidebar:
     st.header("Filtros")
     
     # Filtro de Setor
-    setores = sorted(df['Setor'].unique())
-    setor_selecionado = st.multiselect("Setor", options=setores, default=setores)
+    with st.container(border=True):
+        setores = sorted(df['Setor'].dropna().unique().tolist())
+        setor_selecionado = st.multiselect("Setor", options=setores, default=setores)
     
     # Filtro de ResultadoProducao
-    resultados = df['ResultadoProducao'].unique()
-    resultado_selecionado = st.multiselect("Resultado", options=resultados, default=resultados)
+    with st.container(border=True):
+        resultados = sorted(df['ResultadoProducao'].dropna().unique().tolist())
+        resultado_selecionado, resultado_todos = filtro_checkbox_multiplo(
+            "Resultado",
+            resultados,
+            "filtro_resultado",
+        )
+
+    # Filtro de Classificação de Corte (Massivo/Perdas)
+    with st.container(border=True):
+        classif_corte_opcoes = [
+            opcao for opcao in sorted(df['ClassifCorte'].dropna().unique().tolist())
+            if opcao != "Não Classificado"
+        ]
+        classif_corte_selecionada, classif_corte_todos = filtro_checkbox_multiplo(
+            "Classificação Corte",
+            classif_corte_opcoes,
+            "filtro_classif_corte",
+        )
     
     # Filtro de Equipe
-    equipes = ["Todas"] + sorted(df['Equipe'].unique().tolist())
-    equipe_selecionada = st.selectbox("Equipe", options=equipes)
+    with st.container(border=True):
+        equipes = sorted(df['Equipe'].dropna().unique().tolist())
+        equipe_selecionada = st.multiselect("Equipe", options=equipes, default=equipes)
 
 # Aplicar filtros no Dataframe
-df_filtrado = df[
-    (df['Setor'].isin(setor_selecionado)) & 
-    (df['ResultadoProducao'].isin(resultado_selecionado))
+df_filtrado = df.copy()
+df_filtrado = df_filtrado[
+    (df_filtrado['Setor'].isin(setor_selecionado))
+    & (df_filtrado['Equipe'].isin(equipe_selecionada))
 ]
-if equipe_selecionada != "Todas":
-    df_filtrado = df_filtrado[df_filtrado['Equipe'] == equipe_selecionada]
+if not resultado_todos:
+    df_filtrado = df_filtrado[df_filtrado['ResultadoProducao'].isin(resultado_selecionado)]
+if not classif_corte_todos:
+    df_filtrado = df_filtrado[
+        (df_filtrado['Setor'] == "Corte")
+        & (df_filtrado['ClassifCorte'].isin(classif_corte_selecionada))
+    ]
 
 # 5. CARDS SUPERIORES (Métricas)
 total_ordens = len(df_filtrado)
 qtde_produtivo = len(df_filtrado[df_filtrado['ResultadoProducao'] == 'Produtivo'])
 qtde_improdutivo = len(df_filtrado[df_filtrado['ResultadoProducao'] == 'Improdutivo'])
 
-m1, m2, m3, m4 = st.columns(4)
-m2.metric("Total de Ordens", total_ordens)
-m3.metric("Qtde Produtivo", qtde_produtivo)
-m4.metric("Qtde Improdutivo", qtde_improdutivo)
+def formatar_inteiro(valor: int) -> str:
+    return f"{int(valor):,}".replace(",", ".")
+
+col_ind1, col_ind2, col_ind3 = st.columns(3)
+with col_ind1:
+    st.markdown(
+        "<div class='indicador-card'>"
+        "<div class='indicador-titulo'>Total de Ordens</div>"
+        f"<div class='indicador-valor'>{formatar_inteiro(total_ordens)}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+with col_ind2:
+    st.markdown(
+        "<div class='indicador-card'>"
+        "<div class='indicador-titulo'>Qtde Produtivo</div>"
+        f"<div class='indicador-valor'>{formatar_inteiro(qtde_produtivo)}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+with col_ind3:
+    st.markdown(
+        "<div class='indicador-card'>"
+        "<div class='indicador-titulo'>Qtde Improdutivo</div>"
+        f"<div class='indicador-valor'>{formatar_inteiro(qtde_improdutivo)}</div>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 st.markdown("---")
 
@@ -385,7 +567,44 @@ with col_dir:
     for coluna in ["Produtivo", "Improdutivo", "Contato Gestor"]:
         if coluna not in df_quantitativo.columns:
             df_quantitativo[coluna] = 0
-    df_quantitativo = df_quantitativo[['Setor', 'Produtivo', 'Improdutivo', 'Contato Gestor']]
+    ordem_setores = df_quantitativo['Setor'].tolist()
+
+    df_setores_gerais = df_quantitativo[df_quantitativo['Setor'] != 'Corte'][
+        ['Setor', 'Produtivo', 'Improdutivo', 'Contato Gestor']
+    ]
+
+    df_corte_detalhado = (
+        df_filtrado[
+            (df_filtrado['Setor'] == 'Corte')
+            & (df_filtrado['ClassifCorte'].isin(['Massivo', 'Perdas']))
+        ]
+        .groupby(['ClassifCorte', 'ResultadoProducao'])
+        .size()
+        .unstack(fill_value=0)
+        .reset_index()
+        .rename(columns={'ClassifCorte': 'Setor'})
+    )
+    df_corte_base = pd.DataFrame({'Setor': ['Massivo', 'Perdas']})
+    df_corte_detalhado = df_corte_base.merge(df_corte_detalhado, on='Setor', how='left').fillna(0)
+    for coluna in ["Produtivo", "Improdutivo", "Contato Gestor"]:
+        if coluna not in df_corte_detalhado.columns:
+            df_corte_detalhado[coluna] = 0
+    df_corte_detalhado['Setor'] = df_corte_detalhado['Setor'].map({
+        'Massivo': 'Corte Massivo',
+        'Perdas': 'Corte Perdas',
+    })
+    df_corte_detalhado = df_corte_detalhado[['Setor', 'Produtivo', 'Improdutivo', 'Contato Gestor']]
+
+    df_quantitativo = pd.concat([df_setores_gerais, df_corte_detalhado], ignore_index=True)
+    ordem_final = []
+    for setor in ordem_setores:
+        if setor == 'Corte':
+            ordem_final.extend(['Corte Massivo', 'Corte Perdas'])
+        else:
+            ordem_final.append(setor)
+    df_quantitativo['Setor'] = pd.Categorical(df_quantitativo['Setor'], categories=ordem_final, ordered=True)
+    df_quantitativo = df_quantitativo.sort_values('Setor').reset_index(drop=True)
+
     df_total = pd.DataFrame([{
         'Setor': 'Total',
         'Produtivo': int(df_quantitativo['Produtivo'].sum()),
