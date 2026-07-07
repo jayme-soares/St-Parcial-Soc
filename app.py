@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import html as html_lib
 import os
 import re
@@ -142,7 +143,7 @@ def estilo_tabela(df: pd.DataFrame, destacar_total: bool = False):
                     ("background-color", azul_cabecalho),
                     ("color", "white"),
                     ("font-weight", "bold"),
-                    ("text-align", "left"),
+                    ("text-align", "center"),
                 ],
             },
             {
@@ -172,11 +173,11 @@ def estilo_tabela(df: pd.DataFrame, destacar_total: bool = False):
 
 def altura_tabela(
     df: pd.DataFrame,
-    altura_min: int = 240,
+    altura_min: int = 280,
     altura_max: int = 800,
-    altura_linha: int = 32,
-    altura_cabecalho: int = 40,
-    padding_extra: int = 12,
+    altura_linha: int = 15,
+    altura_cabecalho: int = 30,
+    padding_extra: int = 20,
 ) -> int:
     linhas = len(df)
     if linhas <= 0:
@@ -189,7 +190,7 @@ def altura_tabela_setor_equipes(
     altura_min: int = 360,
     altura_max: int = 820,
     altura_linha: int = 30,
-    altura_cabecalho: int = 40,
+    altura_cabecalho: int = 10,
     padding_extra: int = 16,
 ) -> int:
     if df.empty:
@@ -198,16 +199,91 @@ def altura_tabela_setor_equipes(
     altura = altura_cabecalho + (linhas * altura_linha) + padding_extra
     return max(altura_min, min(altura, altura_max))
 
-def render_tabela(df: pd.DataFrame, altura: int, destacar_total: bool = False) -> None:
-    styler = estilo_tabela(df, destacar_total=destacar_total)
-    styler = styler.set_table_attributes('style="width:100%; border-collapse: collapse;"')
-    html = styler.to_html()
-    st.markdown(
-        f"<div style='height:{altura}px; overflow-y:auto; border:1px solid #d6e4f0; border-radius:4px;'>"
-        f"{html}"
-        "</div>",
-        unsafe_allow_html=True,
+def _formatar_valor_tabela(valor) -> str:
+    if pd.isna(valor):
+        return ""
+    if isinstance(valor, (np.integer, int)):
+        return f"{int(valor):,}".replace(",", ".")
+    if isinstance(valor, (np.floating, float)) and float(valor).is_integer():
+        return f"{int(valor):,}".replace(",", ".")
+    return str(valor)
+
+def _renderizar_tabela_plotly(df: pd.DataFrame, altura: int, destacar_total: bool = False) -> None:
+    df_local = df.copy().reset_index(drop=True)
+    colunas = list(df_local.columns)
+    valores = [
+        [_formatar_valor_tabela(valor) for valor in df_local[coluna].tolist()]
+        for coluna in colunas
+    ]
+
+    linhas = len(df_local)
+    cores_linhas = []
+    for i in range(linhas):
+        if destacar_total and "Setor" in df_local.columns and str(df_local.iloc[i]["Setor"]) == "Total":
+            cores_linhas.append("#0b5ea8")
+        else:
+            cores_linhas.append("#e9f2ff" if i % 2 == 0 else "white")
+
+    cores_celulas = [cores_linhas[:] for _ in colunas]
+    cores_fontes = []
+    for i in range(linhas):
+        if cores_linhas[i] == "#0b5ea8":
+            cores_fontes.append("white")
+        else:
+            cores_fontes.append("#1f2937")
+    fontes_celulas = [cores_fontes[:] for _ in colunas]
+
+    alinhamentos = []
+    for coluna in colunas:
+        if coluna == "Setor" or coluna == "Equipe":
+            alinhamentos.append("left")
+        else:
+            alinhamentos.append("right")
+
+    if "Setor" in df_local.columns:
+        widths = []
+        for coluna in colunas:
+            if coluna == "Setor":
+                widths.append(1.8)
+            elif coluna == "Equipe":
+                widths.append(2.4)
+            else:
+                widths.append(1.0)
+    else:
+        widths = [1.0 for _ in colunas]
+
+    fig = go.Figure(
+        data=[
+            go.Table(
+                header=dict(
+                    values=[f"<b>{coluna}</b>" for coluna in colunas],
+                    fill_color="#0b5ea8",
+                    font=dict(color="white", size=13),
+                    align=["left" if coluna in ("Setor", "Equipe") else "right" for coluna in colunas],
+                    line_color="#0b5ea8",
+                    height=30,
+                ),
+                cells=dict(
+                    values=valores,
+                    fill_color=cores_celulas,
+                    font=dict(color=fontes_celulas, size=12),
+                    align=alinhamentos,
+                    line_color="#d6e4f0",
+                    height=26,
+                ),
+                columnwidth=widths,
+            )
+        ]
     )
+    fig.update_layout(
+        height=max(altura, 260),
+        margin=dict(t=0, b=0, l=0, r=0),
+        paper_bgcolor="white",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+def render_tabela(df: pd.DataFrame, altura: int, destacar_total: bool = False) -> None:
+    _renderizar_tabela_plotly(df, altura, destacar_total=destacar_total)
 
 def render_tabela_setor_equipes(df: pd.DataFrame, altura: int) -> None:
     df_local = df.copy()
@@ -252,7 +328,7 @@ def render_tabela_setor_equipes(df: pd.DataFrame, altura: int) -> None:
         )
 
     tabela_html = (
-        f"<div style='height:{altura}px; overflow-y:auto; border:1px solid #d6e4f0; border-radius:4px;'>"
+        f"<div style='height:{altura}px; min-width:320px; overflow:auto; resize:both; box-sizing:border-box; border:1px solid #d6e4f0; border-radius:4px;'>"
         "<table style='width:100%; border-collapse: collapse; font-size:0.9rem;'>"
         "<thead><tr>"
         f"<th style='{th_style}'>Setor</th>"
