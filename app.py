@@ -1,5 +1,5 @@
 import streamlit as st
-from streamlit.errors import StreamlitSecretNotFoundError
+# from streamlit.errors import StreamlitSecretNotFoundError
 import pandas as pd
 import numpy as np
 import plotly.express as px
@@ -97,10 +97,9 @@ def obter_url_drive(chave: str) -> str | None:
     valor_env = os.getenv(chave)
     if valor_env:
         return valor_env
-    try:
+    else:
         return st.secrets.get(chave)
-    except StreamlitSecretNotFoundError:
-        return None
+    
 
 def normalizar_chave_texto(valor) -> str:
     if pd.isna(valor):
