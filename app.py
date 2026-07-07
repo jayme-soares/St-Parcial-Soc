@@ -18,6 +18,7 @@ st.set_page_config(page_title="Parcial SOC - Maricá | Ceneged", page_icon="📊
 # Paleta de cores baseada no seu print
 CORES_PRODUCAO = {"Produtivo": "#005b96", "Improdutivo": "#d9534f", "Contato Gestor": "#5cb85c"}
 CORES_SETOR = {"Corte": "#d9534f", "Religa": "#005b96", "Novas": "#5bc0de", "Pré Venda": "#5bc0de", "Aferição": "#00008b", "Vistoria": "#f0ad4e"}
+CORES_TRAMITE = {"Medidor": "#1e88ff", "Poste": "#f28b61", "Ramal": "#47c48b"}
 
 st.markdown(
     """
@@ -124,7 +125,7 @@ def validar_config_drive(url_base: str | None, url_suporte: str | None) -> None:
         st.stop()
 
 # Alturas padrão para reduzir o tamanho dos gráficos
-ALTURA_GRAFICO_P = 200
+ALTURA_GRAFICO_P = 300
 ALTURA_GRAFICO_M = 260
 
 def estilo_tabela(df: pd.DataFrame, destacar_total: bool = False):
@@ -582,16 +583,46 @@ with col_esq:
     fig_vis_setor.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=ALTURA_GRAFICO_P)
     st.plotly_chart(fig_vis_setor, use_container_width=True)
 
-    st.markdown("**Trâmite - Executado**")
+    col_tramite_titulo, col_tramite_toggle = st.columns([5, 1])
+    with col_tramite_titulo:
+        st.markdown("**Trâmite - Total Realizado**")
+    with col_tramite_toggle:
+        mostrar_percentual = st.toggle("%", key="tramite_percentual")
+
     df_tramite = df_filtrado[df_filtrado['TramiteExec'] != "Não Executado"]
     df_group_tramite = df_tramite.groupby('TramiteExec').size().reset_index(name='Quantidade')
-    fig_tramite = px.bar(df_group_tramite, x='TramiteExec', y='Quantidade', text='Quantidade')
-    fig_tramite.update_traces(marker_color='#005b96')
+
+    if mostrar_percentual:
+        total_tramites = df_group_tramite['Quantidade'].sum()
+        if total_tramites > 0:
+            df_group_tramite['ValorExibido'] = (df_group_tramite['Quantidade'] / total_tramites) * 100
+        else:
+            df_group_tramite['ValorExibido'] = 0
+        texto_barra = [f"{valor:.0f}%" for valor in df_group_tramite['ValorExibido']]
+        titulo_tramite = "%Tramite - Total Realizado"
+        eixo_y = "Percentual"
+    else:
+        df_group_tramite['ValorExibido'] = df_group_tramite['Quantidade']
+        texto_barra = df_group_tramite['Quantidade'].astype(int).astype(str).tolist()
+        titulo_tramite = "Tramite - Total Realizado"
+        eixo_y = "Quantidade"
+
+    fig_tramite = px.bar(
+        df_group_tramite,
+        x='TramiteExec',
+        y='ValorExibido',
+        text=texto_barra,
+        color='TramiteExec',
+        color_discrete_map=CORES_TRAMITE,
+    )
+    fig_tramite.update_traces(showlegend=False, textposition='auto', cliponaxis=False)
     fig_tramite.update_layout(
+        title=titulo_tramite,
         margin=dict(t=0, b=0, l=0, r=0),
-        xaxis_title=None,
-        yaxis_title=None,
+        xaxis_title="Tramite Executado",
+        yaxis_title=eixo_y,
         height=ALTURA_GRAFICO_P,
+        showlegend=False,
     )
     st.plotly_chart(fig_tramite, use_container_width=True)
 
